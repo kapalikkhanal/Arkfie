@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/rules-of-hooks */
 import {
   View,
   Text,
@@ -10,19 +11,19 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
-  Flatlist,
   RefreshControl,
   FlatList,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Svg, Path } from 'react-native-svg';
 import { AntDesign, Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LineChart } from 'react-native-gifted-charts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import dayjs from 'dayjs';
+import debounce from 'lodash.debounce';
 import { Stock, ChartPoint } from '../../services/marketData';
 
 // Types
@@ -77,18 +78,20 @@ const PlusIcon = () => (
 
 // Reusable Components
 const MiniChart = React.memo(({ data, color }: { data: { value: number }[]; color: string }) => {
-  const hexToRGBA = (hex: string, opacity: number) => {
+  const hexToRGBA = useCallback((hex: string, opacity: number) => {
     const bigint = parseInt(hex.replace('#', ''), 16);
     const r = (bigint >> 16) & 255;
     const g = (bigint >> 8) & 255;
     const b = bigint & 255;
     return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-  };
+  }, []);
+
+  const chartData = useMemo(() => data.map((d) => ({ value: d.value })), [data]);
 
   return (
     <View className="overflow-hidden" style={{ height: 80, marginTop: -40, width: 'auto' }}>
       <LineChart
-        data={data}
+        data={chartData}
         color={color}
         thickness={2}
         hideDataPoints
@@ -137,17 +140,10 @@ const StockCard = React.memo(
     onLongPress: () => void;
     chartData?: { value: number }[];
   }) => {
-    const chartColor =
-      stock.perChange > 0 ? '#10B981' : stock.perChange < 0 ? '#EF4444' : '#3B82F6';
-    const defaultChartData = [
-      { value: 2150 },
-      { value: 2455 },
-      { value: 2260 },
-      { value: 2958 },
-      { value: 2161 },
-    ];
-
-    //  console.log(stock)
+    const chartColor = useMemo(
+      () => (stock.perChange > 0 ? '#10B981' : stock.perChange < 0 ? '#EF4444' : '#3B82F6'),
+      [stock.perChange]
+    );
 
     return (
       <TouchableOpacity
@@ -187,109 +183,97 @@ const StockCard = React.memo(
             </Text>
           </View>
 
-          <MiniChart data={chartData || defaultChartData} color={chartColor} />
+          <MiniChart data={chartData || []} color={chartColor} />
         </View>
       </TouchableOpacity>
     );
-  }
+  },
+  (prevProps, nextProps) =>
+    prevProps.stock.id === nextProps.stock.id && prevProps.chartData === nextProps.chartData
 );
 
-const EmptyWatchlist = ({
-  stock,
-  chartData,
-  onAdd,
-  onPress,
-  onLongPress,
-}: {
-  stock: Stock;
-  onPress: () => void;
-  onLongPress: () => void;
-  chartData?: ChartPoint[];
-  onAdd: () => void;
-}) => {
-  const chartColor = stock.perChange >= 0 ? '#10B981' : stock.perChange < 0 ? '#EF4444' : '#3B82F6';
-  const defaultChartData = [
-    { value: 400 },
-    { value: 405 },
-    { value: 410 },
-    { value: 430 },
-    { value: 450 },
-    { value: 440 },
-    { value: 420 },
-    { value: 450 },
-    { value: 460 },
-    { value: 470 },
-    { value: 480 },
-    { value: 490 },
-    { value: 491 },
-    { value: 480 },
-    { value: 480 },
-  ];
+const EmptyWatchlist = React.memo(
+  ({
+    stock,
+    onAdd,
+    onPress,
+    onLongPress,
+  }: {
+    stock: Stock;
+    onPress: () => void;
+    onLongPress: () => void;
+    onAdd: () => void;
+  }) => {
+    const chartColor = useMemo(
+      () => (stock.perChange >= 0 ? '#10B981' : stock.perChange < 0 ? '#EF4444' : '#3B82F6'),
+      [stock.perChange]
+    );
 
-  return (
-    <View className="flex flex-row items-center justify-center">
-      {/* Left: Message and Add Button */}
-      <View className="mr-2 w-52 items-center justify-center rounded-xl border border-[#dce0e2] px-4 py-6">
-        <AntDesign name="disconnect" size={40} color="#D1D5DB" />
-        <Text className="mt-2 text-gray-500">Your watchlist is empty</Text>
+    return (
+      <View className="flex flex-row items-center justify-center">
+        {/* Left: Message and Add Button */}
+        <View className="mr-2 w-52 items-center justify-center rounded-xl border border-[#dce0e2] px-4 py-6">
+          <AntDesign name="disconnect" size={40} color="#D1D5DB" />
+          <Text className="mt-2 text-gray-500">Your watchlist is empty</Text>
 
+          <TouchableOpacity
+            onPress={onAdd}
+            className="mt-6 flex-row items-center rounded-lg bg-gray-100 px-4 py-2">
+            <PlusIcon />
+            <Text className="ml-2 text-sm font-semibold text-gray-700">Add Stocks</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Right: Suggested Stock Card */}
         <TouchableOpacity
-          onPress={onAdd}
-          className="mt-6 flex-row items-center rounded-lg bg-gray-100 px-4 py-2">
-          <PlusIcon />
-          <Text className="ml-2 text-sm font-semibold text-gray-700">Add Stocks</Text>
+          onPress={onPress}
+          onLongPress={onLongPress}
+          className="mr-3 w-72 rounded-xl border border-[#dce0e2] bg-white p-4"
+          style={{ elevation: 2 }}>
+          <View className="flex w-full flex-row items-center justify-between">
+            <View>
+              <Text className="mt-1 text-sm font-extrabold text-black">{stock.symbol}</Text>
+              <Text className="w-48 text-xs font-light text-black">{stock.companyName}</Text>
+
+              <Text className="mt-2 w-20 rounded-lg bg-gray-400 px-2 py-0.5 text-xs font-light text-white">
+                Suggested
+              </Text>
+            </View>
+            <View>
+              <Text
+                className={`mt-1 text-sm font-semibold ${
+                  stock.percentageChange >= 0 ? 'text-green-500' : 'text-red-500'
+                }`}>
+                {stock.percentageChange >= 0 ? '+' : ''}
+                {typeof stock.percentageChange === 'number'
+                  ? stock.percentageChange.toFixed(2)
+                  : stock.percentageChange}
+                %
+              </Text>
+            </View>
+          </View>
+
+          <View className="mt-10 flex w-full flex-row items-center justify-between">
+            <View>
+              <Text className="w-32 text-xl font-bold text-black">
+                Rs. {formatIndianNumber(stock.lastTradedPrice)}
+              </Text>
+              <Text
+                className={`text-sm font-semibold ${
+                  stock?.schange >= 0 ? 'text-green-500' : 'text-red-500'
+                }`}>
+                {stock?.schange >= 0 ? '+' : ''}
+                {typeof stock.schange === 'number' ? stock.schange.toFixed(2) : stock.schange}
+              </Text>
+            </View>
+
+            <MiniChart data={[]} color={chartColor} />
+          </View>
         </TouchableOpacity>
       </View>
-
-      {/* Right: Suggested Stock Card */}
-      <TouchableOpacity
-        onPress={onPress}
-        onLongPress={onLongPress}
-        className="mr-3 w-72 rounded-xl border border-[#dce0e2] bg-white p-4"
-        style={{ elevation: 2 }}>
-        <View className="flex w-full flex-row items-center justify-between">
-          <View>
-            <Text className="mt-1 text-sm font-extrabold text-black">{stock.symbol}</Text>
-            <Text className="w-48 text-xs font-light text-black">{stock.companyName}</Text>
-
-            <Text className="mt-2 w-20 rounded-lg bg-gray-400 px-2 py-0.5 text-xs font-light text-white">
-              Suggested
-            </Text>
-          </View>
-          <View>
-            <Text
-              className={`mt-1 text-sm font-semibold ${
-                stock.percentageChange >= 0 ? 'text-green-500' : 'text-red-500'
-              }`}>
-              {stock.percentageChange >= 0 ? '+' : ''}
-              {typeof stock.percentageChange === 'number'
-                ? stock.percentageChange.toFixed(2)
-                : stock.percentageChange}
-              %
-            </Text>
-          </View>
-        </View>
-
-        <View className="mt-10 flex w-full flex-row items-center justify-between">
-          <View>
-            <Text className="w-32 text-xl font-bold text-black">
-              Rs. {formatIndianNumber(stock.lastTradedPrice)}
-            </Text>
-            <Text
-              className={`text-sm font-semibold ${
-                stock?.schange >= 0 ? 'text-green-500' : 'text-red-500'
-              }`}>
-              {stock?.schange >= 0 ? '+' : ''}
-              {typeof stock.schange === 'number' ? stock.schange.toFixed(2) : stock.schange}
-            </Text>
-          </View>
-
-          <MiniChart data={defaultChartData} color={chartColor} />
-        </View>
-      </TouchableOpacity>
-    </View>
-  );
-};
+    );
+  }
+);
 
 // Main Component
 const DashboardScreen = () => {
@@ -312,13 +296,12 @@ const DashboardScreen = () => {
   const [chartDataCache, setChartDataCache] = useState<ChartDataCache>({});
   const [sortOption, setSortOption] = useState<SortOption>('symbol');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
   const [selectedIndexType, setSelectedIndexType] = useState<'N' | 'S' | 'F'>('N');
 
   // Derived data
   const portfolioData = useMemo(() => {
     if (!marketData?.liveData) return [];
-    return marketData.liveData.map((stock: { perChange: number | null }) => ({
+    return marketData.liveData.map((stock: Stock) => ({
       ...stock,
       isUp: stock.perChange != null ? stock.perChange >= 0 : true,
       logoColor: getRandomColor(),
@@ -327,14 +310,25 @@ const DashboardScreen = () => {
 
   const availableStocks = useMemo(() => {
     if (!marketData?.liveData) return [];
-    return marketData.liveData.map((stock: { symbol: any; companyName: any; name: any }) => ({
+    return marketData.liveData.map((stock: Stock) => ({
       symbol: stock.symbol,
       name: stock.companyName || stock.name || '',
     }));
   }, [marketData]);
 
+  // Debounced search handlers
+  const handleSearchDebounced = useMemo(
+    () => debounce((query: string) => setSearchQuery(query), 300),
+    []
+  );
+
+  const handleStockSearchDebounced = useMemo(
+    () => debounce((query: string) => setStockSearchQuery(query), 300),
+    []
+  );
+
   // Watchlist management
-  const loadWatchlist = async () => {
+  const loadWatchlist = useCallback(async () => {
     try {
       const savedWatchlist = await AsyncStorage.getItem('watchlist');
       if (savedWatchlist) {
@@ -344,66 +338,76 @@ const DashboardScreen = () => {
     } catch (error) {
       console.error('Error loading watchlist:', error);
     }
-  };
+  }, []);
 
-  const saveWatchlist = async (newWatchlist: StockWithId[]) => {
+  const saveWatchlist = useCallback(async (newWatchlist: StockWithId[]) => {
     try {
       await AsyncStorage.setItem('watchlist', JSON.stringify(newWatchlist));
     } catch (error) {
       console.error('Error saving watchlist:', error);
     }
-  };
+  }, []);
 
-  const addToWatchlist = (stock: { symbol: string; name: string }) => {
-    const isAlreadyAdded = watchlist.some((item) => item.symbol === stock.symbol);
+  const addToWatchlist = useCallback(
+    (stock: { symbol: string; name: string }) => {
+      const isAlreadyAdded = watchlist.some((item) => item.symbol === stock.symbol);
 
-    if (isAlreadyAdded) {
-      Alert.alert('Already Added', `${stock.symbol} is already in your watchlist.`);
-      return;
-    }
+      if (isAlreadyAdded) {
+        Alert.alert('Already Added', `${stock.symbol} is already in your watchlist.`);
+        return;
+      }
 
-    const stockData = portfolioData.find(
-      (item: { symbol: string }) => item.symbol === stock.symbol
-    );
+      const stockData = portfolioData.find((item: Stock) => item.symbol === stock.symbol);
 
-    const newStock: StockWithId = {
-      id: Date.now(),
-      name: stockData.name || stock.name,
-      price: parseFloat(stockData.price?.toString() || '0'),
-      symbol: stock.symbol,
-      change: parseFloat(stockData.change?.toString() || '0'),
-      perChange: parseFloat((stockData.perChange?.toString() || '0').replace('%', '')),
-      companyName: stockData.companyName || stock.name,
-      schange: parseFloat(stockData.schange?.toString() || '0'),
-      lastTradedPrice: parseFloat(stockData.lastTradedPrice?.toString() || '0'),
-      percentageChange: parseFloat(stockData.percentageChange?.toString() || '0'),
-    };
+      const newStock: StockWithId = {
+        id: Date.now(),
+        name: stockData?.name || stock.name,
+        price: parseFloat(stockData?.price?.toString() || '0'),
+        symbol: stock.symbol,
+        change: parseFloat(stockData?.change?.toString() || '0'),
+        perChange: parseFloat((stockData?.perChange?.toString() || '0').replace('%', '')),
+        companyName: stockData?.companyName || stock.name,
+        schange: parseFloat(stockData?.schange?.toString() || '0'),
+        lastTradedPrice: parseFloat(stockData?.lastTradedPrice?.toString() || '0'),
+        percentageChange: parseFloat(stockData?.percentageChange?.toString() || '0'),
+      };
 
-    const updatedWatchlist = [newStock, ...watchlist];
-    setWatchlist(updatedWatchlist);
-    saveWatchlist(updatedWatchlist);
-    setModalVisible(false);
-    setStockSearchQuery('');
+      setWatchlist((prev) => {
+        const updatedWatchlist = [newStock, ...prev];
+        saveWatchlist(updatedWatchlist);
+        return updatedWatchlist;
+      });
 
-    fetchChartData(stock.symbol).then(() => {
+      setModalVisible(false);
+      setStockSearchQuery('');
       scrollViewRef.current?.scrollTo({ x: 0, y: 0, animated: true });
-    });
-  };
+    },
+    [watchlist, portfolioData, saveWatchlist]
+  );
 
-  const removeFromWatchlist = (stockId: number) => {
-    Alert.alert('Remove Stock', 'Are you sure you want to remove this stock from your watchlist?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: () => {
-          const updatedWatchlist = watchlist.filter((item) => item.id !== stockId);
-          setWatchlist(updatedWatchlist);
-          saveWatchlist(updatedWatchlist);
-        },
-      },
-    ]);
-  };
+  const removeFromWatchlist = useCallback(
+    (stockId: number) => {
+      Alert.alert(
+        'Remove Stock',
+        'Are you sure you want to remove this stock from your watchlist?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: () => {
+              setWatchlist((prev) => {
+                const updatedWatchlist = prev.filter((item) => item.id !== stockId);
+                saveWatchlist(updatedWatchlist);
+                return updatedWatchlist;
+              });
+            },
+          },
+        ]
+      );
+    },
+    [saveWatchlist]
+  );
 
   const fetchChartData = async (symbol: string) => {
     try {
@@ -446,11 +450,9 @@ const DashboardScreen = () => {
     }
   };
 
-  const navigateToStockDetails = (stock: StockWithId) => {
-    let stockData = portfolioData.find((p: { symbol: string }) => p.symbol === stock.symbol);
-
-    if (!stockData) {
-      stockData = {
+  const navigateToStockDetails = useCallback(
+    (stock: StockWithId) => {
+      const stockData = portfolioData.find((p: Stock) => p.symbol === stock.symbol) || {
         symbol: stock.symbol,
         name: stock.name,
         change: stock.change ? stock.change.toString() : '0.00',
@@ -459,45 +461,53 @@ const DashboardScreen = () => {
         isUp: typeof stock.perChange === 'number' ? stock.perChange >= 0 : true,
         logoColor: getRandomColor(),
       };
-    }
 
-    navigation.navigate('StockDetails', { stock: stockData });
-  };
+      navigation.navigate('StockDetails', { stock: stockData });
+    },
+    [portfolioData, navigation]
+  );
 
-  const toggleSearch = () => {
+  const toggleSearch = useCallback(() => {
     setShowSearch(!showSearch);
     if (!showSearch && searchInputRef.current) {
       setTimeout(() => searchInputRef.current?.focus(), 50);
     }
-  };
+  }, [showSearch]);
 
-  const clearSearch = () => {
+  const clearSearch = useCallback(() => {
     setShowSearch(false);
     setSearchQuery('');
-  };
+  }, []);
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    loadWatchlist();
-    setRefreshing(false);
-  };
+    loadWatchlist().then(() => setRefreshing(false));
+  }, [loadWatchlist]);
 
-  const filteredStocks = portfolioData.filter(
-    (stock: { symbol: string; name: string; companyName: string }) =>
-      (stock.symbol?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-      (stock.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-      (stock.companyName?.toLowerCase() || '').includes(searchQuery.toLowerCase())
-  );
+  const filteredStocks = useMemo(() => {
+    if (!searchQuery) return portfolioData;
 
-  const filteredAvailableStocks = availableStocks.filter(
-    (stock: { symbol: string; name: string }) =>
-      (stock.symbol?.toLowerCase() || '').includes(stockSearchQuery.toLowerCase()) ||
-      (stock.name?.toLowerCase() || '').includes(stockSearchQuery.toLowerCase())
-  );
+    return portfolioData.filter(
+      (stock: Stock) =>
+        (stock.symbol?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+        (stock.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+        (stock.companyName?.toLowerCase() || '').includes(searchQuery.toLowerCase())
+    );
+  }, [portfolioData, searchQuery]);
+
+  const filteredAvailableStocks = useMemo(() => {
+    if (!stockSearchQuery) return availableStocks;
+
+    return availableStocks.filter(
+      (stock: Stock) =>
+        (stock.symbol?.toLowerCase() || '').includes(stockSearchQuery.toLowerCase()) ||
+        (stock.name?.toLowerCase() || '').includes(stockSearchQuery.toLowerCase())
+    );
+  }, [availableStocks, stockSearchQuery]);
 
   const sortedFilteredStocks = useMemo(() => {
     return [...filteredStocks]
-      .filter((stock) => stock.lastTradedPrice !== null && stock.schange !== null) // ✅ Omit invalid stocks
+      .filter((stock) => stock.lastTradedPrice !== null && stock.schange !== null)
       .sort((a, b) => {
         let comparison = 0;
 
@@ -507,10 +517,14 @@ const DashboardScreen = () => {
           comparison = a.symbol.localeCompare(b.symbol);
         } else {
           const valA =
-            typeof a[sortOption] === 'string' ? parseFloat(a[sortOption]) : a[sortOption];
+            typeof a[sortOption] === 'string'
+              ? parseFloat(a[sortOption] as number)
+              : (a[sortOption] as number);
           const valB =
-            typeof b[sortOption] === 'string' ? parseFloat(b[sortOption]) : b[sortOption];
-          comparison = (valA as number) - (valB as number);
+            typeof b[sortOption] === 'string'
+              ? parseFloat(b[sortOption] as number)
+              : (b[sortOption] as number);
+          comparison = valA - valB;
         }
 
         return sortDirection === 'asc' ? comparison : -comparison;
@@ -519,14 +533,20 @@ const DashboardScreen = () => {
 
   useEffect(() => {
     loadWatchlist();
-  }, []);
+  }, [loadWatchlist]);
 
   useEffect(() => {
     if (watchlist.length > 0 && marketData) {
       preloadChartData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlist, marketData]);
+
+  useEffect(() => {
+    return () => {
+      handleSearchDebounced.cancel();
+      handleStockSearchDebounced.cancel();
+    };
+  }, [handleSearchDebounced, handleStockSearchDebounced]);
 
   if (!marketData) {
     return (
@@ -536,29 +556,59 @@ const DashboardScreen = () => {
     );
   }
 
-  const nepseIndex = marketData.nepseIndex.find(
-    (index: { sindex: string }) => index.sindex === 'NEPSE Index'
-  );
+  const nepseIndex = marketData.nepseIndex.find((index: Stock) => index.sindex === 'NEPSE Index');
   const sensitiveIndex = marketData.nepseIndex.find(
-    (index: { sindex: string }) => index.sindex === 'Sensitive Index'
+    (index: Stock) => index.sindex === 'Sensitive Index'
   );
-  const floatIndex = marketData.nepseIndex.find(
-    (index: { sindex: string }) => index.sindex === 'Float Index'
-  );
+  const floatIndex = marketData.nepseIndex.find((index: Stock) => index.sindex === 'Float Index');
   const totalTurnover = marketData.marketSummary.find(
-    (item: { ms_key: string }) => item.ms_key === 'Total Turnover Rs:'
+    (item: Stock) => item.ms_key === 'Total Turnover Rs:'
   );
   const totalTradedShares = marketData.marketSummary.find(
-    (item: { ms_key: string }) => item.ms_key === 'Total Traded Shares'
+    (item: Stock) => item.ms_key === 'Total Traded Shares'
   );
 
-  // console.log(sortedFilteredStocks)
+  const renderModalItem = useCallback(
+    ({ item }: { item: Stock }) => (
+      <TouchableOpacity
+        onPress={() => addToWatchlist(item)}
+        className="flex-row items-center justify-between border-b border-gray-100 px-2 py-3">
+        <View className="flex-1">
+          <Text className="text-sm font-bold text-black">{item.symbol}</Text>
+          <Text className="text-xs text-gray-600">{item.name}</Text>
+        </View>
+        <Ionicons name="add-circle-outline" size={24} color="#15a37b" />
+      </TouchableOpacity>
+    ),
+    [addToWatchlist]
+  );
+
+  const keyExtractor = useCallback((item: Stock, index: number) => `${item.symbol}-${index}`, []);
+
+  const getItemLayout = useCallback(
+    (data: any, index: number) => ({ length: 80, offset: 80 * index, index }),
+    []
+  );
 
   return (
-    <View style={{ flex: 1, paddingTop: insets.top, marginTop: 10, backgroundColor: 'white' }}>
-      <StatusBar style="dark" />
+    <View className="flex flex-col bg-white" style={{ paddingTop: insets.top }}>
+      <StatusBar style="auto" />
+
+      {/* Header Section */}
+      <View className="mb-4 flex-row items-center justify-between px-6 pt-4">
+        <View>
+          <Text className="mx-1.5 text-lg font-bold text-gray-500">Hello, Kapalik</Text>
+        </View>
+        <View className="flex-1 flex-row items-center justify-end">
+          <TouchableOpacity className="relative m-1 mx-4">
+            <Ionicons name="notifications-outline" size={24} color="#6B7280" />
+            <View className="absolute right-0 h-1.5 w-1.5 rounded-full bg-red-600" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Fixed Header Section */}
       <ScrollView
-        ref={scrollViewRef}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -567,24 +617,12 @@ const DashboardScreen = () => {
             tintColor="#15a37b"
           />
         }
-        className="px-6">
-        {/* Header Section */}
-        <View className="mb-5 flex-row items-center justify-between">
-          <View>
-            <Text className="mx-1.5 text-lg font-bold text-gray-500">Hello, Kapalik</Text>
-          </View>
-          <View className="flex-1 flex-row items-center justify-end">
-            <TouchableOpacity className="relative m-1 mx-4">
-              <Ionicons name="notifications-outline" size={24} color="#6B7280" />
-              <View className="absolute right-0 h-1.5 w-1.5 rounded-full bg-red-600" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
+        className="px-4"
+        showsVerticalScrollIndicator={false}>
         {/* Total Investment Card */}
         {nepseIndex && (
           <View
-            className="relative mb-6 h-52 rounded-2xl bg-[#1dcc97] p-6"
+            className="relative mb-6 mt-2 h-52 rounded-2xl bg-[#1dcc97]"
             style={{ transform: [{ rotate: '-1.5deg' }] }}>
             <View
               className="absolute inset-0 flex items-center justify-center rounded-2xl bg-[#02314a] p-6"
@@ -787,97 +825,85 @@ const DashboardScreen = () => {
           </ScrollView>
         </KeyboardAvoidingView>
 
-        {/* My Portfolio Section */}
-        <View>
-          <View className="mb-3 flex-row items-center justify-between">
-            <Text className="text-xl font-bold text-black">Stocks Activity</Text>
+        {/* Stocks Activity Header */}
+        <View className="mb-3 flex-row items-center justify-between">
+          <Text className="text-xl font-bold text-black">Stocks Activity</Text>
 
-            {showSearch ? (
-              <View className="ml-4 flex-1 flex-row items-center">
-                <TextInput
-                  ref={searchInputRef}
-                  className="flex-1 rounded-lg border border-[#dce0e2] px-4 py-2"
-                  placeholder="Search Stocks"
-                  placeholderTextColor="#9CA3AF"
-                  value={searchQuery}
-                  onChangeText={(text) => {
-                    setSearchQuery(text);
-                    // Debounce is handled in the filteredStocks calculation
-                  }}
-                  autoFocus={true}
-                />
-                <TouchableOpacity className="ml-2 p-2" onPress={clearSearch}>
-                  <Ionicons name="close" size={24} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View className="flex flex-row items-center justify-center">
-                <TouchableOpacity
-                  onPress={() => setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                  className="ml-2 p-1">
-                  <Ionicons
-                    name={sortDirection === 'asc' ? 'arrow-up' : 'arrow-down'}
-                    size={24}
-                    color="#6B7280"
-                  />
-                </TouchableOpacity>
-                <TouchableOpacity className="ml-4 px-4 py-2" onPress={toggleSearch}>
-                  <Ionicons name="search-outline" size={24} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-
-          {/* Portfolio List - Replaced with FlatList */}
-          <FlatList
-            data={sortedFilteredStocks}
-            keyExtractor={(item, index) => `${item.symbol}-${index}`}
-            renderItem={({ item: stock }) => (
-              <TouchableOpacity
-                onPress={() => navigateToStockDetails(stock)}
-                className="mb-3 w-full flex-row items-center justify-between rounded-xl border border-[#dce0e2] bg-white p-3 py-4">
-                {/* Stock Info */}
-                <View className="flex-1 flex-col items-start justify-center">
-                  <Text className="mt-1 text-sm font-extrabold text-black">{stock.symbol}</Text>
-                  <Text className="text-xs font-light text-black">{stock.companyName}</Text>
-                </View>
-
-                {/* Stock Value and Change */}
-                <View className="ml-2 w-20 items-start">
-                  <Text className="text-base font-bold text-black">{stock.schange}</Text>
-                  <View className="mt-1 flex-row items-center">
-                    {stock.isUp ? <UpArrowIcon /> : <DownArrowIcon />}
-                    <Text
-                      className={`${
-                        stock.isUp ? 'text-green-600' : 'text-red-600'
-                      } ml-1 text-sm font-semibold`}>
-                      {stock.percentageChange}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Price */}
-                <View className="ml-4 w-32 items-end">
-                  <Text className="text-base font-bold text-black">
-                    Rs. {stock.lastTradedPrice}
-                  </Text>
-                </View>
+          {showSearch ? (
+            <View className="ml-4 flex-1 flex-row items-center">
+              <TextInput
+                ref={searchInputRef}
+                className="flex-1 rounded-lg border border-[#dce0e2] px-4 py-2"
+                placeholder="Search Stocks"
+                placeholderTextColor="#9CA3AF"
+                defaultValue={searchQuery}
+                onChangeText={handleSearchDebounced}
+                autoFocus={true}
+              />
+              <TouchableOpacity className="ml-2 p-2" onPress={clearSearch}>
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
-            )}
-            ListEmptyComponent={
-              <View className="items-center justify-center py-10">
-                <Text className="text-gray-500">No stocks found</Text>
-              </View>
-            }
-            getItemLayout={(data, index) => ({ length: 80, offset: 80 * index, index })}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            style={{ height: 280 }}
-            showsVerticalScrollIndicator={false}
-          />
+            </View>
+          ) : (
+            <View className="flex flex-row items-center justify-center">
+              <TouchableOpacity
+                onPress={() => setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+                className="ml-2 p-1">
+                <Ionicons
+                  name={sortDirection === 'asc' ? 'arrow-up' : 'arrow-down'}
+                  size={24}
+                  color="#6B7280"
+                />
+              </TouchableOpacity>
+              <TouchableOpacity className="ml-4 px-4 py-2" onPress={toggleSearch}>
+                <Ionicons name="search-outline" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </ScrollView>
+
+      {/* Stocks Activity List - Separate scrollable section */}
+      <View className="h-96 px-6">
+        <FlatList
+          data={sortedFilteredStocks}
+          keyExtractor={keyExtractor}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              onPress={() => navigateToStockDetails(item)}
+              className="mb-3 w-full flex-row items-center justify-between rounded-xl border border-[#dce0e2] bg-white p-3 py-4">
+              <View className="flex-1 flex-col items-start justify-center">
+                <Text className="mt-1 text-sm font-extrabold text-black">{item.symbol}</Text>
+                <Text className="text-xs font-light text-black">{item.companyName}</Text>
+              </View>
+
+              <View className="ml-2 w-20 items-start">
+                <Text className="text-base font-bold text-black">{item.schange}</Text>
+                <View className="mt-1 flex-row items-center">
+                  {item.isUp ? <UpArrowIcon /> : <DownArrowIcon />}
+                  <Text
+                    className={`${
+                      item.isUp ? 'text-green-600' : 'text-red-600'
+                    } ml-1 text-sm font-semibold`}>
+                    {item.percentageChange}
+                  </Text>
+                </View>
+              </View>
+
+              <View className="ml-4 w-32 items-end">
+                <Text className="text-base font-bold text-black">Rs. {item.lastTradedPrice}</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+          getItemLayout={getItemLayout}
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          removeClippedSubviews={false}
+          showsVerticalScrollIndicator={true}
+          contentContainerStyle={{ paddingBottom: 20 }}
+        />
+      </View>
 
       {/* Add Stock Modal */}
       <Modal
@@ -898,33 +924,26 @@ const DashboardScreen = () => {
               className="mb-4 w-full rounded-lg border border-[#dce0e2] px-4 py-3"
               placeholder="Search stocks..."
               placeholderTextColor="#9CA3AF"
-              value={stockSearchQuery}
-              onChangeText={setStockSearchQuery}
+              defaultValue={stockSearchQuery}
+              onChangeText={handleStockSearchDebounced}
               autoFocus={true}
             />
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {filteredAvailableStocks.map(
-                (stock: { symbol: any; name: any }, index: React.Key | null | undefined) => (
-                  <TouchableOpacity
-                    key={index}
-                    onPress={() => addToWatchlist(stock)}
-                    className="flex-row items-center justify-between border-b border-gray-100 px-2 py-3">
-                    <View className="flex-1">
-                      <Text className="text-sm font-bold text-black">{stock.symbol}</Text>
-                      <Text className="text-xs text-gray-600">{stock.name}</Text>
-                    </View>
-                    <Ionicons name="add-circle-outline" size={24} color="#15a37b" />
-                  </TouchableOpacity>
-                )
-              )}
+            <FlatList
+              data={filteredAvailableStocks}
+              keyExtractor={keyExtractor}
+              renderItem={renderModalItem}
+              initialNumToRender={15}
+              maxToRenderPerBatch={10}
+              windowSize={7}
+              removeClippedSubviews={true}
+            />
 
-              {filteredAvailableStocks.length === 0 && (
-                <View className="items-center justify-center py-10">
-                  <Text className="text-gray-500">No stocks found</Text>
-                </View>
-              )}
-            </ScrollView>
+            {filteredAvailableStocks.length === 0 && (
+              <View className="items-center justify-center py-10">
+                <Text className="text-gray-500">No stocks found</Text>
+              </View>
+            )}
           </View>
         </View>
       </Modal>

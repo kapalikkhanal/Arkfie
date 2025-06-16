@@ -19,6 +19,8 @@ export interface MarketData {
 }
 
 export interface Stock {
+  sindex: string;
+  ms_key: string;
   companyName?: string;
   schange?: number | null;
   lastTradedPrice?: number | null;
