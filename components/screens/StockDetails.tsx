@@ -4,30 +4,86 @@ import {
   SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  StyleSheet,
   StatusBar,
   Dimensions,
   Alert,
   ActivityIndicator,
+  Share,
 } from 'react-native';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Svg, Path } from 'react-native-svg';
-import { LineChart, BarChart } from 'react-native-gifted-charts';
+// import { LineChart } from 'react-native-gifted-charts';
+import { LineChart } from 'react-native-wagmi-charts';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
+import formatIndianNumber from 'components/Dashboard/FormatIndianNumber';
 import moment from 'moment';
+import { PieChart } from 'react-native-gifted-charts';
+import StockCard from 'components/Dashboard/StockCard';
+import FearGauge from 'components/FearMeter';
 
 const { width } = Dimensions.get('window');
 
-const statsData = [
-  { label: 'Market Cap', value: 'Rs 12.5B' },
-  { label: 'P/E Ratio', value: '18.5' },
-  { label: 'Volume', value: '1.2M' },
-  { label: '52W High', value: 'Rs 892.00' },
-  { label: '52W Low', value: 'Rs 445.00' },
-  { label: 'Dividend Yield', value: '3.2%' },
-];
+// Types
+interface ChartDataPoint {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+interface StockDetails {
+  openPrice: string;
+  highPrice: string;
+  lowPrice: string;
+  totalTradeQuantity: string;
+  totalTradeValue: string;
+  lastTradedPrice: string;
+  percentageChange: string;
+  lastUpdatedDateTime: string;
+  lastUpdatedDate: string;
+  totalTrades: string;
+  previousClose: string;
+  marketCapitalization: string;
+  fiftyTwoWeekHigh: string;
+  fiftyTwoWeekLow: string;
+  averageTradedPrice: string;
+  companyName: string;
+  symbol: string;
+  instrumentType: string;
+  public: string;
+  promoter: string;
+  companyEmail: string;
+  sectorName: string;
+  cap_type: string;
+  schange: number;
+  perChange: number;
+}
+
+interface RelatedStock {
+  symbol: string;
+  name: string;
+  price: string;
+  change: string;
+  perChange: string;
+  isUp: boolean;
+}
+
+interface Stock {
+  symbol: string;
+  name: string;
+  price: string;
+  change: string;
+  perChange: string;
+  isUp: boolean;
+}
+
+interface RouteParams {
+  stock: Stock;
+}
 
 const BackIcon = () => (
   <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -80,26 +136,32 @@ const DownArrowIcon = () => (
 const StockDetailsScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
-  const { stock } = route.params;
+  const { stock, liveData } = route.params as RouteParams;
 
-  const [timeframe, setTimeframe] = useState('1D');
-  const [isInWatchlist, setIsInWatchlist] = useState(false);
-  const [activeTab, setActiveTab] = useState('chart');
-  const [chartData, setChartData] = useState([]);
+  const [timeframe, setTimeframe] = useState<string>('1M');
+  const [isInWatchlist, setIsInWatchlist] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<string>('chart');
+  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [volumeData, setVolumeData] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState(null);
+  const [meterData, setMeterData] = useState<number | null>(null);
+
+  const [stockDetails, setStockDetails] = useState<StockDetails | null>(null);
+  const [relatedStocks, setRelatedStocks] = useState<RelatedStock[]>([]);
 
   const timeframes = ['1M', '3M', '6M', '1Y'];
   const tabs = [
     { id: 'chart', label: 'Chart' },
-    { id: 'stats', label: 'Stats' },
     { id: 'news', label: 'News' },
   ];
 
   useEffect(() => {
     checkWatchlistStatus();
     fetchChartData();
+    fetchStockDetails();
+    findRelatedStocks();
+    fetchFearMeterData();
   }, []);
 
   useEffect(() => {
@@ -107,6 +169,29 @@ const StockDetailsScreen = () => {
       filterDataByTimeframe();
     }
   }, [timeframe, chartData]);
+
+  const handleShare = () => {
+    try {
+      console.log(stock);
+      const shareMessage = `Check out ${stock.symbol} (${stockDetails?.companyName || stock.name}) on Arkfie:
+    
+      Current Price: Rs ${stock.lastTradedPrice}
+      Today's Change: Rs ${stock.schange} (${stock.percentageChange}%)
+      Last Updated: ${moment(stock?.lastUpdatedDate).format('MMM DD')}
+
+      Download Arkfie to track this stock and get real-time market updates, detailed analysis, and trading insights!
+
+      https://arkfie.com/download`;
+
+      Share.share({
+        message: shareMessage,
+        title: `Share ${stock.symbol} Details`,
+      });
+    } catch (error) {
+      Alert.alert('Error', 'Failed to share stock details');
+      console.error('Error sharing:', error);
+    }
+  };
 
   const checkWatchlistStatus = async () => {
     try {
@@ -123,11 +208,56 @@ const StockDetailsScreen = () => {
     }
   };
 
+  const fetchStockDetails = async () => {
+    try {
+      const response = await fetch(`https://peridotnepal.xyz/api/live_data/live/${stock.symbol}`, {
+        headers: {
+          Permission: '2021D@T@f@RSt6&%2-D@T@',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch stock details');
+      }
+
+      const data = await response.json();
+      if (data.status === 200 && data.data && data.data.length > 0) {
+        setStockDetails(data.data[0]);
+      }
+    } catch (err: any) {
+      console.error('Error fetching stock details:', err);
+    }
+  };
+
+  const fetchFearMeterData = async () => {
+    try {
+      const response = await fetch(
+        `https://peridotnepal.xyz/api/company/get_trading_meter/${stock.symbol}`,
+        {
+          headers: {
+            Permission: '2021D@T@f@RSt6&%2-D@T@',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch stock details');
+      }
+
+      const data = await response.json();
+      if (data.status === 200 && data.data) {
+        setMeterData(data.data.percent);
+      }
+    } catch (err: any) {
+      console.error('Error fetching stock details:', err);
+    }
+  };
+
   const fetchChartData = async () => {
     try {
       setLoading(true);
       const currentTimestamp = Date.now() / 1000;
-      const oneYearAgoTimestamp = currentTimestamp - 24 * 24 * 60 * 60;
+      const oneYearAgoTimestamp = currentTimestamp - 365 * 24 * 60 * 60;
 
       const response = await fetch(
         `https://peridotnepal.xyz/api/company/chart_data/${stock.symbol}/${oneYearAgoTimestamp}`,
@@ -143,7 +273,6 @@ const StockDetailsScreen = () => {
       }
 
       const data = await response.json();
-      //   console.log(data);
       if (response.status === 200 && data.data) {
         // Sort data by timestamp in ascending order
         const sortedData = data.data.sort((a: { t: number }, b: { t: number }) => a.t - b.t);
@@ -165,35 +294,17 @@ const StockDetailsScreen = () => {
     }
   };
 
-  const calculateChartMetrics = (data: any[]) => {
-    if (!data || data.length === 0) return null;
+  const findRelatedStocks = () => {
+    if (!liveData || !stock) return;
 
-    // Calculate min and max values with some padding
-    const values = data.map((item) => item.value);
-    const minValue = Math.min(...values);
-    const maxValue = Math.max(...values);
+    // console.log("Live Data:",liveData)
 
-    const padding = (maxValue - minValue) * 0.1; // 10% padding
-    const adjustedMin = Math.max(0, minValue - padding);
-    const adjustedMax = maxValue + padding;
+    const filtered = liveData.filter(
+      (s: { symbol: string; sectorName: string }) =>
+        s.symbol !== stock.symbol && s.sectorName === stock.sectorName
+    );
 
-    // Calculate optimal spacing based on data range
-    const range = adjustedMax - adjustedMin;
-    let spacing = 50;
-    if (range > 1000) spacing = 100;
-    if (range > 5000) spacing = 500;
-    if (range > 10000) spacing = 1000;
-
-    // Calculate optimal number of labels
-    const numLabels = Math.min(5, data.length);
-    const labelStep = Math.ceil(data.length / numLabels);
-
-    return {
-      minValue: adjustedMin,
-      maxValue: adjustedMax,
-      spacing,
-      labelStep,
-    };
+    setRelatedStocks(filtered);
   };
 
   const filterDataByTimeframe = () => {
@@ -280,7 +391,6 @@ const StockDetailsScreen = () => {
 
   const renderChart = () => {
     const filteredData = filterDataByTimeframe();
-    const metrics = calculateChartMetrics(filteredData);
 
     if (loading) {
       return (
@@ -303,16 +413,25 @@ const StockDetailsScreen = () => {
       );
     }
 
-    const baseSpacing = 20;
-    const minSpacing = 18;
-    const maxSpacing = 50;
-    let spacing = baseSpacing;
+    // Prepare data for wagmi charts
+    const chartData = filteredData.map((item) => ({
+      timestamp: item.date.getTime(),
+      value: item.value,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      volume: item.volume,
+    }));
 
-    if (filteredData.length > 15) {
-      spacing = Math.max(minSpacing, baseSpacing - (filteredData.length - 15));
-    } else if (filteredData.length < 10) {
-      spacing = Math.min(maxSpacing, baseSpacing + (10 - filteredData.length) * 5);
-    }
+    const minIndex = chartData.reduce(
+      (minIdx, curr, idx, arr) => (curr.value < arr[minIdx].value ? idx : minIdx),
+      0
+    );
+
+    const maxIndex = chartData.reduce(
+      (maxIdx, curr, idx, arr) => (curr.value > arr[maxIdx].value ? idx : maxIdx),
+      0
+    );
 
     return (
       <View className="mb-4 rounded-xl bg-white px-2 py-4" style={{ elevation: 2 }}>
@@ -337,157 +456,79 @@ const StockDetailsScreen = () => {
           </View>
         </View>
 
-        {/* Chart Container */}
-        <View className="mb-4 overflow-hidden rounded-lg bg-gray-50/30 p-2">
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingRight: 20 }}>
-            <LineChart
-              data={filteredData}
-              color="#1dcc97"
-              thickness={2.5}
-              curved
-              isAnimated
-              animationDuration={1200}
-              height={220}
-              width={Math.max(width * 1.8, filteredData.length * spacing)}
-              initialSpacing={0}
-              spacing={spacing}
-              yAxisOffset={metrics?.minValue || 0}
-              noOfSections={5}
-              yAxisLabelWidth={40}
-              yAxisLabelPrefix="Rs "
-              yAxisTextStyle={{ fontSize: 10 }}
-              xAxisLabelTextStyle={{ fontSize: 10, textAlign: 'center' }}
-              hideDataPoints={filteredData.length > 30}
-              dataPointsColor="#15a37b"
-              dataPointsRadius={4}
-              startFillColor="rgba(21, 163, 123, 0.08)"
-              endFillColor="rgba(21, 163, 123, 0.02)"
-              startOpacity={0.5}
-              endOpacity={0}
-              areaChart
-              showReferenceLine1
-              referenceLine1Position={metrics ? (metrics.minValue + metrics.maxValue) / 2 : 0}
-              referenceLine1Config={{
-                color: 'gray',
-                dashWidth: 2,
-                dashGap: 3,
+        {/* Wagmi Chart */}
+        <View style={{ height: 300 }}>
+          <LineChart.Provider data={chartData}>
+            <LineChart height={250}>
+              <LineChart.Path color={stock.perChange >= 0 ? '#10B981' : '#EF4444'} width={2}>
+                <LineChart.Gradient
+                  colors={
+                    stock.perChange >= 0
+                      ? ['rgba(16, 185, 129, 0.2)', 'rgba(16, 185, 129, 0)']
+                      : ['rgba(239, 68, 68, 0.2)', 'rgba(239, 68, 68, 0)']
+                  }
+                />
+                <LineChart.Dot at={minIndex} color="red" hasPulse />
+                <LineChart.Dot at={maxIndex} color="green" hasPulse />
+              </LineChart.Path>
+
+              <LineChart.CursorCrosshair color="#64748B">
+                <LineChart.Tooltip
+                  textStyle={{
+                    color: '#000',
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                  }}
+                  style={{
+                    backgroundColor: 'white',
+                    borderRadius: 8,
+                    padding: 8,
+                    borderWidth: 1,
+                    borderColor: '#E5E7EB',
+                  }}
+                />
+              </LineChart.CursorCrosshair>
+            </LineChart>
+
+            {/* X-Axis with dates */}
+            <LineChart.DatetimeText
+              locale="en-IN"
+              options={{
+                year: undefined,
+                month: 'short',
+                day: 'numeric',
               }}
-              focusEnabled
-              showStripOnFocus
-              stripColor="rgba(21, 163, 123, 0.3)"
-              stripWidth={2}
-              showTextOnFocus
-              textFontSize={12}
-              textColor="#374151"
-              focusedDataPointColor="#15a37b"
-              focusedDataPointRadius={6}
-              pointerConfig={{
-                pointerStripHeight: 160,
-                pointerStripColor: 'lightgray',
-                pointerStripWidth: 2,
-                pointerColor: 'lightgray',
-                radius: 6,
-                pointerLabelWidth: 140,
-                pointerLabelHeight: 120,
-                activatePointersOnLongPress: true,
-                autoAdjustPointerLabelPosition: true,
-                pointerLabelComponent: (items: any[]) => {
-                  const item = items[0];
-                  return (
-                    <View
-                      style={{
-                        height: 120,
-                        width: 140,
-                        padding: 10,
-                        borderRadius: 8,
-                        backgroundColor: 'white',
-                        borderWidth: 1,
-                        borderColor: '#E5E7EB',
-                      }}>
-                      <Text style={{ fontSize: 10, color: '#6B7280' }}>
-                        {moment(item.date).format('DD MMM YYYY, HH:mm')}
-                      </Text>
-                      <Text style={{ fontWeight: 'bold', marginTop: 4 }}>
-                        Rs {item.value.toFixed(2)}
-                      </Text>
-                      <View style={{ marginTop: 4 }}>
-                        <Text style={{ fontSize: 10 }}>Open: Rs {item.open}</Text>
-                        <Text style={{ fontSize: 10 }}>High: Rs {item.high}</Text>
-                        <Text style={{ fontSize: 10 }}>Low: Rs {item.low}</Text>
-                        <Text style={{ fontSize: 10 }}>Volume: {item.volume}</Text>
-                      </View>
-                    </View>
-                  );
-                },
+              style={{
+                color: '#64748B',
+                fontSize: 12,
+                marginTop: 8,
               }}
             />
-          </ScrollView>
+          </LineChart.Provider>
         </View>
 
         {/* Price Info */}
-        <View className="mt-4 flex-row items-center justify-between border-t border-gray-100 pt-4">
+        {/* <View className="mt-4 flex-row items-center justify-between border-t border-gray-100 pt-4">
           <View>
             <Text className="text-xs text-gray-500">Current Price</Text>
-            <Text className="text-lg font-bold text-black">Rs. {stock.price}</Text>
+            <Text className="text-lg font-bold text-black">Rs. {stock.lastTradedPrice}</Text>
           </View>
           <View className="items-end">
-            <Text className="text-xs text-gray-500">Today&apos;s Change</Text>
+            <Text className="text-xs text-gray-500">Today's Change</Text>
             <View className="flex-row items-center">
-              {stock.isUp ? <UpArrowIcon /> : <DownArrowIcon />}
+              {stock.perChange >= 0 ? <UpArrowIcon /> : <DownArrowIcon />}
               <Text
                 className={`ml-1 text-sm font-semibold ${
-                  stock.isUp ? 'text-green-600' : 'text-red-600'
+                  stock.perChange >= 0 ? 'text-green-600' : 'text-red-600'
                 }`}>
-                {stock.change} ({stock.perChange})
+                Rs {stock.schange} ({stock.perChange}%)
               </Text>
             </View>
           </View>
-        </View>
+        </View> */}
       </View>
     );
   };
-
-  const renderStats = () => (
-    <View className="mx-4 mb-4 rounded-xl bg-white p-4" style={{ elevation: 2 }}>
-      <Text className="mb-4 text-lg font-bold text-black">Key Statistics</Text>
-      <View className="flex-row flex-wrap">
-        {statsData.map((stat, index) => (
-          <View key={index} className="mb-4 w-1/2">
-            <Text className="text-sm text-gray-600">{stat.label}</Text>
-            <Text className="text-lg font-semibold text-black">{stat.value}</Text>
-          </View>
-        ))}
-      </View>
-
-      <Text className="mb-4 mt-4 text-lg font-bold text-black">Volume</Text>
-      {volumeData && volumeData.length > 0 ? (
-        <BarChart
-          data={volumeData}
-          width={width - 80}
-          height={150}
-          barWidth={40}
-          spacing={20}
-          roundedTop
-          barBorderRadius={4}
-          frontColor="#15a37b"
-          showGradient
-          gradientColor="#4fd1c7"
-          hideAxesAndRules={false}
-          xAxisColor="#E5E7EB"
-          yAxisColor="#E5E7EB"
-          isAnimated
-          animationDuration={1000}
-        />
-      ) : (
-        <View className="h-40 items-center justify-center">
-          <Text className="text-gray-500">No volume data available</Text>
-        </View>
-      )}
-    </View>
-  );
 
   const renderNews = () => (
     <View className="mx-4 mb-4 rounded-xl bg-white p-4" style={{ elevation: 2 }}>
@@ -528,9 +569,13 @@ const StockDetailsScreen = () => {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'chart':
-        return renderChart();
-      case 'stats':
-        return renderStats();
+        return (
+          <>
+            {renderChart()}
+            {renderKeyStats()}
+            {/* {renderRelatedStocks()} */}
+          </>
+        );
       case 'news':
         return renderNews();
       default:
@@ -538,72 +583,344 @@ const StockDetailsScreen = () => {
     }
   };
 
+  const renderKeyStats = () => {
+    if (!stockDetails) return null;
+
+    // Calculate holdings percentages
+    const totalShares = parseFloat(stockDetails.public) + parseFloat(stockDetails.promoter);
+    // console.log(totalShares)
+    const publicPercentage = totalShares > 0 ? (stockDetails.public / totalShares) * 100 : 0;
+    const promoterPercentage = totalShares > 0 ? (stockDetails.promoter / totalShares) * 100 : 0;
+
+    const stats = [
+      { label: 'Market Cap', value: `Rs ${formatIndianNumber(stockDetails.marketCapitalization)}` },
+      { label: 'Open Price', value: `Rs ${formatIndianNumber(stockDetails.openPrice)}` },
+      { label: 'High Price', value: `Rs ${formatIndianNumber(stockDetails.highPrice)}` },
+      { label: 'Low Price', value: `Rs ${formatIndianNumber(stockDetails.lowPrice)}` },
+      { label: '52W High', value: `Rs ${formatIndianNumber(stockDetails.fiftyTwoWeekHigh)}` },
+      { label: '52W Low', value: `Rs ${formatIndianNumber(stockDetails.fiftyTwoWeekLow)}` },
+      { label: 'Volume', value: formatIndianNumber(stockDetails.totalTradeQuantity) },
+      { label: 'Total Trades', value: formatIndianNumber(stockDetails.totalTrades) },
+    ];
+
+    return (
+      <View className="mx-4 -mt-10 rounded-xl border border-[#dce0e2] p-6" style={{ elevation: 2 }}>
+        {/* Shareholding Pattern Pie Chart */}
+        <View className="mb-2">
+          <Text className="mb-4 text-center text-lg font-bold text-black">
+            Shareholding Pattern
+          </Text>
+          <View className="flex-col items-center justify-between">
+            <View className="flex-1">
+              <View className="items-center">
+                <PieChart
+                  data={[
+                    {
+                      value: publicPercentage,
+                      color: '#3B82F6',
+                      text: 'Public',
+                      textColor: 'white',
+                      textSize: 10,
+                      shiftX: 2.25,
+                      shiftY: -1,
+                    },
+                    {
+                      value: promoterPercentage,
+                      color: '#10B981',
+                      text: 'Promoter',
+                      textColor: 'white',
+                      textSize: 10,
+                    },
+                  ]}
+                  radius={80}
+                  innerRadius={45}
+                  textSize={10}
+                  showTextBackground
+                  textBackgroundRadius={12}
+                  centerLabelComponent={() => (
+                    <View className="items-center">
+                      <Text className="text-xs font-semibold text-gray-600">Total Share</Text>
+                      <Text className="text-xs font-bold text-black">
+                        {Math.floor(totalShares)}
+                      </Text>
+                    </View>
+                  )}
+                />
+              </View>
+            </View>
+
+            <View className="mt-4 flex-1 pl-4">
+              <View className="mb-3 flex-row items-center">
+                <View className="mr-2 h-3 w-3 rounded-full bg-[#3B82F6]" />
+                <Text className="text-sm text-gray-700">
+                  Public: {formatIndianNumber(stockDetails.public)} ({publicPercentage.toFixed(1)}%)
+                </Text>
+              </View>
+              <View className="flex-row items-center">
+                <View className="mr-2 h-3 w-3 rounded-full bg-[#10B981]" />
+                <Text className="text-sm text-gray-700">
+                  Promoter: {formatIndianNumber(stockDetails.promoter)} (
+                  {promoterPercentage.toFixed(1)}%)
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Divider  */}
+        <View className="my-4 border-t border-gray-200" />
+
+        <Text className="mb-8 text-center text-lg font-bold text-black">Statistics</Text>
+        <View className="flex-row flex-wrap justify-between">
+          {stats.map((stat, index) => (
+            <View key={index} className="mb-4 w-1/2">
+              <View className="pr-2">
+                <Text className="text-center text-sm text-gray-600">{stat.label}</Text>
+                <Text className="text-center text-base font-semibold text-black">{stat.value}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        {/* Divider  */}
+        <View className="my-4 border-t border-gray-200" />
+
+        <Text className="mb-8 text-center text-lg font-bold text-black">Technical Meter</Text>
+        <FearGauge value={meterData} />
+      </View>
+    );
+  };
+
+  const renderRelatedStocks = () => (
+    <View className="mx-4 mb-6 rounded-xl border border-[#dce0e2] bg-gray-100">
+      <View className="flex-row items-center justify-between p-4 pb-2">
+        <Text className="mb-2 text-lg font-bold text-gray-900">Related Stocks</Text>
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+        <View className="flex-row space-x-3">
+          {relatedStocks?.slice(-7)?.map((relatedStock, index) => {
+            // Get the last 16 data points for the chart
+            const limitedChartData =
+              chartData?.slice(-16)?.map((item) => ({ value: item.c })) || [];
+
+            // console.log(relatedStock);
+
+            return (
+              <StockCard
+                key={index}
+                stock={{
+                  ...relatedStock,
+                }}
+                chartData={limitedChartData}
+                onPress={() =>
+                  navigation.navigate('StockDetails', {
+                    stock: relatedStock,
+                    liveData: liveData,
+                  })
+                }
+                onLongPress={() => {}}
+              />
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-white">
       <StatusBar barStyle={'default'} />
 
       {/* Header */}
-      <View className="w-full flex-row items-center justify-between bg-white px-4 py-3">
-        <TouchableOpacity className="w-1/3" onPress={() => navigation.goBack()}>
+      <View className="w-full flex-row items-center justify-between bg-white px-4 pt-4">
+        <TouchableOpacity className="w-10" onPress={() => navigation.goBack()}>
           <BackIcon />
         </TouchableOpacity>
-        <Text className="w-1/3 text-center text-lg font-bold text-black">{stock.symbol}</Text>
-        <View className="flex w-1/3 flex-row items-center justify-end">
-          <TouchableOpacity className="mr-8">
+        <View className="flex-1 items-center">
+          <Text className="text-lg font-bold text-gray-900">{stock.symbol}</Text>
+          {stockDetails && <Text className="text-sm text-gray-500">{stockDetails.sectorName}</Text>}
+        </View>
+        <View className="flex w-10 flex-row items-center justify-end">
+          <TouchableOpacity onPress={handleShare}>
             <Feather name="share" size={22} color="#6B7280" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={toggleWatchlist}>
+          <TouchableOpacity className="ml-6" onPress={toggleWatchlist}>
             <HeartIcon filled={isInWatchlist} />
           </TouchableOpacity>
         </View>
       </View>
 
-      <ScrollView className="flex-1">
-        {/* Stock Info Card */}
-        <View className="mx-4 mb-4 mt-4 rounded-xl bg-white p-4" style={{ elevation: 2 }}>
-          <View className="mb-2 flex-row items-center justify-between">
-            <Text className="text-2xl font-bold text-black">{stock.symbol}</Text>
-            <Text className="text-2xl font-bold text-black">Rs. {stock.price}</Text>
-          </View>
+      {/* Stock Info Card */}
+      <View>
+        <View
+          className="relative mx-3 mb-6 mt-4 h-52 rounded-2xl bg-[#1dcc97]"
+          style={{ transform: [{ rotate: '-1.5deg' }] }}>
+          <View
+            className="absolute inset-0 rounded-2xl bg-[#02314a] p-4"
+            style={{ transform: [{ rotate: '1.5deg' }] }}>
+            {/* Front Card Content */}
+            <View className="flex-1">
+              {/* Symbol and Price Info */}
+              <View className="mb-3 flex-row items-start justify-between">
+                <View className="flex-1">
+                  <Text className="mb-1 text-2xl font-bold text-white">{stock.symbol}</Text>
+                  <Text numberOfLines={1} className="text-sm leading-5 text-gray-300">
+                    {stockDetails?.companyName || stock.name}
+                  </Text>
+                </View>
+                <View className="items-end">
+                  <Text className="mb-1 text-2xl font-bold text-white">
+                    Rs {stockDetails?.lastTradedPrice || stock.price}
+                  </Text>
+                  <View className="flex-row items-center">
+                    {(stockDetails?.perChange || parseFloat(stock.perChange)) >= 0 ? (
+                      <UpArrowIcon />
+                    ) : (
+                      <DownArrowIcon />
+                    )}
+                    <Text
+                      className={`ml-1 text-sm font-semibold ${
+                        (stockDetails?.perChange || parseFloat(stock.perChange)) >= 0
+                          ? 'text-emerald-300'
+                          : 'text-red-300'
+                      }`}>
+                      {stockDetails?.perChange?.toFixed(2) || stock.perChange}% (
+                      {stockDetails?.schange || stock.change})
+                    </Text>
+                  </View>
+                </View>
+              </View>
 
-          <View className="mb-2 flex-row items-center justify-between">
-            <Text className="text-sm text-gray-600">{stock.name}</Text>
-            <View className="flex-row items-center">
-              {stock.isUp ? <UpArrowIcon /> : <DownArrowIcon />}
-              <Text
-                className={`ml-1 text-sm font-semibold ${
-                  stock.isUp ? 'text-green-600' : 'text-red-600'
-                }`}>
-                {stock.perChange} ({stock.change})
-              </Text>
+              {/* Instrument Info */}
+              {stockDetails && (
+                <View className="mt-2 flex-1  flex-row items-start justify-between">
+                  <View className="flex-row items-center">
+                    <View className="mr-4">
+                      <Text className="text-xs text-gray-300">Instrument</Text>
+                      <Text className="text-sm font-medium text-white">
+                        {stockDetails.instrumentType}
+                      </Text>
+                    </View>
+                    <View>
+                      <Text className="text-xs text-gray-300">Category</Text>
+                      <Text className="text-sm font-medium text-white">
+                        {stockDetails.cap_type}
+                      </Text>
+                    </View>
+                  </View>
+                  <View className="flex">
+                    <Text className="text-right text-xs text-gray-300">Last Updated</Text>
+                    <Text className="text-sm font-medium text-white">
+                      {moment(stockDetails.lastUpdatedDateTime).format('MMM DD, HH:mm')}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Divider and Footer Info */}
+              {stockDetails && (
+                <View className="mt-4 border-t border-gray-600 pt-4">
+                  <View className="flex-row items-center justify-between">
+                    <View className="flex-1 items-center justify-center">
+                      <Text className="mb-1 text-xs text-gray-300">Previous Close</Text>
+                      <Text className="text-sm font-semibold text-white">
+                        Rs {stockDetails.previousClose}
+                      </Text>
+                    </View>
+                    <View className="flex-1 items-center justify-center">
+                      <Text className="mb-1 text-xs text-gray-300">Avg Price</Text>
+                      <Text className="text-sm font-semibold text-white">
+                        Rs {stockDetails.averageTradedPrice}
+                      </Text>
+                    </View>
+                    <View className="flex-1 items-center justify-center">
+                      <Text className="mb-1 text-xs text-gray-300">Trade Value</Text>
+                      <Text className="text-sm font-semibold text-white">
+                        Rs {parseFloat(stockDetails.totalTradeValue).toLocaleString()}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              )}
             </View>
           </View>
         </View>
+      </View>
 
-        {/* Tabs */}
-        <View className="mx-4 mb-4 flex-row rounded-xl bg-white" style={{ elevation: 2 }}>
-          {tabs.map((tab) => (
-            <TouchableOpacity
-              key={tab.id}
-              onPress={() => setActiveTab(tab.id)}
-              className={`flex-1 py-3 ${
-                activeTab === tab.id ? 'border-b-2 border-[#15a37b]' : ''
+      {/* Tabs */}
+      <View className="mx-4 mb-4 flex-row rounded-xl bg-white" style={{ elevation: 2 }}>
+        {tabs.map((tab) => (
+          <TouchableOpacity
+            key={tab.id}
+            onPress={() => setActiveTab(tab.id)}
+            className={`flex-1 py-3 ${activeTab === tab.id ? 'border-b-2 border-[#15a37b]' : ''}`}>
+            <Text
+              className={`text-center font-medium ${
+                activeTab === tab.id ? 'text-[#15a37b]' : 'text-gray-600'
               }`}>
-              <Text
-                className={`text-center font-medium ${
-                  activeTab === tab.id ? 'text-[#15a37b]' : 'text-gray-600'
-                }`}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
+      <ScrollView className="flex-1">
         {/* Tab Content */}
         {renderTabContent()}
 
-        {/* Bottom spacing */}
-        <View className="h-6" />
+        {/* Related Stocks  */}
+        <View className="mt-4">{renderRelatedStocks()}</View>
+
+        {/* Join Us */}
+        <View className="m-4 mb-20 rounded-xl border border-[#e9ecef] bg-[#f8f9fa] p-5">
+          <View className="mb-2 flex-row items-center">
+            <View className="mr-2 rounded-full bg-[#15a37b] p-1">
+              <Ionicons name="trophy" size={16} color="white" />
+            </View>
+            <Text className="text-lg font-bold text-black">Join Arkfie Traders</Text>
+          </View>
+
+          <Text className="mb-3 text-sm text-gray-600">
+            Get <Text className="font-bold text-[#15a37b]">80% OFF</Text> today to unlock
+          </Text>
+
+          <View className="mb-4">
+            {[
+              'Exclusive Telegram group access',
+              'High-return trading strategies',
+              'Insider market tips & analysis',
+              'Winning stock picks from top traders',
+            ].map((item, index) => (
+              <View key={index} className="mb-1 flex-row items-start">
+                <Ionicons
+                  name="checkmark-circle"
+                  size={14}
+                  color="#15a37b"
+                  className="mr-2 mt-0.5"
+                />
+                <Text className="flex-1 text-sm text-gray-800">{item}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center">
+              <MaterialIcons name="group" size={16} color="#6c757d" />
+              <Text className="ml-1 text-xs text-gray-500">Limited spots remaining</Text>
+            </View>
+
+            <TouchableOpacity
+              className="flex-row items-center rounded-full bg-[#15a37b] px-4 py-2"
+              activeOpacity={0.8}>
+              <Text className="mr-2 font-medium text-white">Join VIP Team</Text>
+              <MaterialIcons name="arrow-forward" size={16} color="white" />
+            </TouchableOpacity>
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

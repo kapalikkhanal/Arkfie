@@ -4,6 +4,8 @@ import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import { View, Text, Image, Dimensions, StyleSheet } from 'react-native';
 import * as Font from 'expo-font';
 import { NavigationContainer } from '@react-navigation/native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import './global.css';
@@ -21,8 +23,10 @@ import DashboardScreen from 'components/screens/Dashboard';
 import StockDetailsScreen from 'components/screens/StockDetails';
 import MarketScreen from 'components/screens/Market';
 import NewsScreen from 'components/screens/NewsScreen';
+import SettingsScreen from 'components/screens/Settings';
 
 import { MaterialIcons, FontAwesome, FontAwesome5, AntDesign } from '@expo/vector-icons';
+import PortfolioScreen from 'components/screens/PortfolioScreen';
 
 // Types
 type RootStackParamList = {
@@ -32,28 +36,12 @@ type RootStackParamList = {
     initialCandleData?: CandleData[];
   };
   StockDetails: { stock: Stock };
+  PortfolioScreen: { stock: Stock };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
 const { width } = Dimensions.get('window');
-
-// Tab Screens
-function SettingsScreen() {
-  return (
-    <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-2xl font-bold">Settings Screen</Text>
-    </View>
-  );
-}
-
-function ProfileScreen() {
-  return (
-    <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-2xl font-bold">Profile</Text>
-    </View>
-  );
-}
 
 function MainTabs({ route }: { route: any }) {
   const { marketData, initialCandleData } = route.params || {};
@@ -234,27 +222,38 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <SafeAreaProvider>
-        <SafeAreaView style={{ flex: 1 }} edges={['right', 'left']}>
-          <Stack.Navigator
-            screenOptions={{
-              headerShown: false,
-              animation: 'fade',
-            }}>
-            <Stack.Screen name="Splash" component={SplashScreen} />
-            <Stack.Screen name="Main" component={MainTabs} />
-            <Stack.Screen
-              name="StockDetails"
-              component={StockDetailsScreen}
-              options={{
-                animation: 'slide_from_right',
-              }}
-            />
-          </Stack.Navigator>
-        </SafeAreaView>
-      </SafeAreaProvider>
-    </NavigationContainer>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <BottomSheetModalProvider>
+        <NavigationContainer>
+          <SafeAreaProvider>
+            <SafeAreaView style={{ flex: 1 }} edges={['right', 'left']}>
+              <Stack.Navigator
+                screenOptions={{
+                  headerShown: false,
+                  animation: 'fade',
+                }}>
+                <Stack.Screen name="Splash" component={SplashScreen} />
+                <Stack.Screen name="Main" component={MainTabs} />
+                <Stack.Screen
+                  name="StockDetails"
+                  component={StockDetailsScreen}
+                  options={{
+                    animation: 'slide_from_right',
+                  }}
+                />
+                <Stack.Screen
+                  name="PortfolioScreen"
+                  component={PortfolioScreen}
+                  options={{
+                    animation: 'slide_from_right',
+                  }}
+                />
+              </Stack.Navigator>
+            </SafeAreaView>
+          </SafeAreaProvider>
+        </NavigationContainer>
+      </BottomSheetModalProvider>
+    </GestureHandlerRootView>
   );
 }
 

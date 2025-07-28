@@ -1,30 +1,31 @@
-/* eslint-disable react-hooks/rules-of-hooks */
+/* eslint-disable react-hooks/exhaustive-deps */
 import {
   View,
   Text,
   SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   KeyboardAvoidingView,
   Platform,
-  Modal,
   Alert,
   ActivityIndicator,
   RefreshControl,
-  FlatList,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Svg, Path } from 'react-native-svg';
-import { AntDesign, Ionicons } from '@expo/vector-icons';
+import { AntDesign, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { LineChart } from 'react-native-gifted-charts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import dayjs from 'dayjs';
 import debounce from 'lodash.debounce';
-import { Stock, ChartPoint } from '../../services/marketData';
+import { Stock } from '../../services/marketData';
+import Popup from 'components/Dashboard/Popup';
+import StockCard from 'components/Dashboard/StockCard';
+import PortfolioSummary from 'components/Dashboard/PortfolioSummary';
+import MarketMoverCard from 'components/Dashboard/MarketMoverCard';
+import AddStockModal from 'components/Dashboard/AddStockModal';
+import SearchModal from 'components/Dashboard/SearchModal';
 
 // Types
 interface StockWithId extends Stock {
@@ -37,243 +38,24 @@ interface ChartDataCache {
   [key: string]: { value: number; date?: Date }[];
 }
 
-type SortOption = 'name' | 'symbol' | 'change' | 'perChange';
+interface PortfolioStock {
+  symbol: string;
+  name: string;
+  quantity: number;
+  avgPrice: number;
+}
 
-// Icons
-const UpArrowIcon = () => (
-  <Svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-    <Path
-      d="M12 19V5M5 12L12 5L19 12"
-      stroke="#10B981"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </Svg>
-);
-
-const DownArrowIcon = () => (
-  <Svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-    <Path
-      d="M12 5V19M19 12L12 19L5 12"
-      stroke="#EF4444"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </Svg>
-);
-
-const PlusIcon = () => (
-  <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <Path
-      d="M12 5V19M5 12H19"
-      stroke="#6B7280"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </Svg>
-);
-
-// Reusable Components
-const MiniChart = React.memo(({ data, color }: { data: { value: number }[]; color: string }) => {
-  const hexToRGBA = useCallback((hex: string, opacity: number) => {
-    const bigint = parseInt(hex.replace('#', ''), 16);
-    const r = (bigint >> 16) & 255;
-    const g = (bigint >> 8) & 255;
-    const b = bigint & 255;
-    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
-  }, []);
-
-  const chartData = useMemo(() => data.map((d) => ({ value: d.value })), [data]);
-
-  return (
-    <View className="overflow-hidden" style={{ height: 80, marginTop: -40, width: 'auto' }}>
-      <LineChart
-        data={chartData}
-        color={color}
-        thickness={2}
-        hideDataPoints
-        hideYAxisText
-        hideAxesAndRules
-        curved
-        areaChart
-        startFillColor={hexToRGBA(color, 0.5)}
-        endFillColor={hexToRGBA(color, 0.0)}
-        startOpacity={0.6}
-        endOpacity={0}
-        yAxisColor="transparent"
-        xAxisColor="transparent"
-        initialSpacing={0}
-        spacing={6.5}
-      />
-    </View>
-  );
-});
-
-const formatIndianNumber = (num: any) => {
-  if (num === undefined || num === null) return '0.00';
-  const numStr = typeof num === 'number' ? num.toString() : num;
-  const number = parseFloat(numStr.replace(/,/g, ''));
-  if (isNaN(number)) return '0.00';
-  return number.toLocaleString('en-IN', {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-  });
-};
+interface Portfolio {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  stocks: PortfolioStock[];
+}
 
 const getRandomColor = () => {
   const colors = ['#4A90E2', '#50E3C2', '#F5A623', '#BD10E0', '#9013FE', '#FF6B6B', '#4ECDC4'];
   return colors[Math.floor(Math.random() * colors.length)];
 };
-
-const StockCard = React.memo(
-  ({
-    stock,
-    onPress,
-    onLongPress,
-    chartData,
-  }: {
-    stock: StockWithId;
-    onPress: () => void;
-    onLongPress: () => void;
-    chartData?: { value: number }[];
-  }) => {
-    const chartColor = useMemo(
-      () => (stock.perChange > 0 ? '#10B981' : stock.perChange < 0 ? '#EF4444' : '#3B82F6'),
-      [stock.perChange]
-    );
-
-    return (
-      <TouchableOpacity
-        onPress={onPress}
-        onLongPress={onLongPress}
-        className="mr-3 w-72 rounded-xl border border-[#dce0e2] bg-white p-4"
-        style={{ elevation: 2 }}>
-        <View className="flex w-full flex-row items-center justify-between">
-          <View>
-            <Text className="mt-1 text-sm font-extrabold text-black">{stock.symbol}</Text>
-            <Text className="w-48 text-xs font-light text-black">{stock.name}</Text>
-          </View>
-          <View>
-            <Text
-              className={`mt-1 text-sm font-semibold ${
-                stock.perChange >= 0 ? 'text-green-500' : 'text-red-500'
-              }`}>
-              {stock.perChange >= 0 ? '+' : ''}
-              {typeof stock.perChange === 'number' ? stock.perChange.toFixed(2) : stock.perChange}%
-            </Text>
-          </View>
-        </View>
-
-        <View className="mt-10 flex w-full flex-row items-center justify-between">
-          <View className="">
-            <Text className="w-32 text-xl font-bold text-black">
-              Rs. {formatIndianNumber(stock.schange)}
-            </Text>
-            <Text
-              className={`text-sm font-semibold ${
-                stock.perChange >= 0 ? 'text-green-500' : 'text-red-500'
-              }`}>
-              {stock.perChange >= 0 ? '+' : ''}
-              {typeof stock.percentageChange === 'number'
-                ? stock.percentageChange.toFixed(2)
-                : stock.percentageChange}
-            </Text>
-          </View>
-
-          <MiniChart data={chartData || []} color={chartColor} />
-        </View>
-      </TouchableOpacity>
-    );
-  },
-  (prevProps, nextProps) =>
-    prevProps.stock.id === nextProps.stock.id && prevProps.chartData === nextProps.chartData
-);
-
-const EmptyWatchlist = React.memo(
-  ({
-    stock,
-    onAdd,
-    onPress,
-    onLongPress,
-  }: {
-    stock: Stock;
-    onPress: () => void;
-    onLongPress: () => void;
-    onAdd: () => void;
-  }) => {
-    const chartColor = useMemo(
-      () => (stock.perChange >= 0 ? '#10B981' : stock.perChange < 0 ? '#EF4444' : '#3B82F6'),
-      [stock.perChange]
-    );
-
-    return (
-      <View className="flex flex-row items-center justify-center">
-        {/* Left: Message and Add Button */}
-        <View className="mr-2 w-52 items-center justify-center rounded-xl border border-[#dce0e2] px-4 py-6">
-          <AntDesign name="disconnect" size={40} color="#D1D5DB" />
-          <Text className="mt-2 text-gray-500">Your watchlist is empty</Text>
-
-          <TouchableOpacity
-            onPress={onAdd}
-            className="mt-6 flex-row items-center rounded-lg bg-gray-100 px-4 py-2">
-            <PlusIcon />
-            <Text className="ml-2 text-sm font-semibold text-gray-700">Add Stocks</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Right: Suggested Stock Card */}
-        <TouchableOpacity
-          onPress={onPress}
-          onLongPress={onLongPress}
-          className="mr-3 w-72 rounded-xl border border-[#dce0e2] bg-white p-4"
-          style={{ elevation: 2 }}>
-          <View className="flex w-full flex-row items-center justify-between">
-            <View>
-              <Text className="mt-1 text-sm font-extrabold text-black">{stock.symbol}</Text>
-              <Text className="w-48 text-xs font-light text-black">{stock.companyName}</Text>
-
-              <Text className="mt-2 w-20 rounded-lg bg-gray-400 px-2 py-0.5 text-xs font-light text-white">
-                Suggested
-              </Text>
-            </View>
-            <View>
-              <Text
-                className={`mt-1 text-sm font-semibold ${
-                  stock.percentageChange >= 0 ? 'text-green-500' : 'text-red-500'
-                }`}>
-                {stock.percentageChange >= 0 ? '+' : ''}
-                {typeof stock.percentageChange === 'number'
-                  ? stock.percentageChange.toFixed(2)
-                  : stock.percentageChange}
-                %
-              </Text>
-            </View>
-          </View>
-
-          <View className="mt-10 flex w-full flex-row items-center justify-between">
-            <View>
-              <Text className="w-32 text-xl font-bold text-black">
-                Rs. {formatIndianNumber(stock.lastTradedPrice)}
-              </Text>
-              <Text
-                className={`text-sm font-semibold ${
-                  stock?.schange >= 0 ? 'text-green-500' : 'text-red-500'
-                }`}>
-                {stock?.schange >= 0 ? '+' : ''}
-                {typeof stock.schange === 'number' ? stock.schange.toFixed(2) : stock.schange}
-              </Text>
-            </View>
-
-            <MiniChart data={[]} color={chartColor} />
-          </View>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-);
 
 // Main Component
 const DashboardScreen = () => {
@@ -281,22 +63,19 @@ const DashboardScreen = () => {
   const route = useRoute();
   const insets = useSafeAreaInsets();
   const scrollViewRef = useRef<ScrollView>(null);
-  const searchInputRef = useRef<TextInput>(null);
 
   // Get initial data from route params
   const { marketData } = route.params || {};
 
   // State
-  const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [watchlist, setWatchlist] = useState<StockWithId[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
-  const [stockSearchQuery, setStockSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [chartDataCache, setChartDataCache] = useState<ChartDataCache>({});
-  const [sortOption, setSortOption] = useState<SortOption>('symbol');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [selectedIndexType, setSelectedIndexType] = useState<'N' | 'S' | 'F'>('N');
+  const [defaultPortfolio, setDefaultPortfolio] = useState<Portfolio | null>(null);
+  const [searchModalVisible, setSearchModalVisible] = useState(false);
 
   // Derived data
   const portfolioData = useMemo(() => {
@@ -310,20 +89,21 @@ const DashboardScreen = () => {
 
   const availableStocks = useMemo(() => {
     if (!marketData?.liveData) return [];
+    // console.log(marketData.liveData)
     return marketData.liveData.map((stock: Stock) => ({
       symbol: stock.symbol,
       name: stock.companyName || stock.name || '',
+      sectorName: stock.sectorName || '',
+      percentageChange: stock.percentageChange || '',
+      lastTradedPrice: stock.lastTradedPrice || '',
+      perChange: stock.perChange || '',
+      schange: stock.schange || '',
     }));
   }, [marketData]);
 
   // Debounced search handlers
   const handleSearchDebounced = useMemo(
     () => debounce((query: string) => setSearchQuery(query), 300),
-    []
-  );
-
-  const handleStockSearchDebounced = useMemo(
-    () => debounce((query: string) => setStockSearchQuery(query), 300),
     []
   );
 
@@ -370,6 +150,8 @@ const DashboardScreen = () => {
         schange: parseFloat(stockData?.schange?.toString() || '0'),
         lastTradedPrice: parseFloat(stockData?.lastTradedPrice?.toString() || '0'),
         percentageChange: parseFloat(stockData?.percentageChange?.toString() || '0'),
+        sindex: '',
+        ms_key: '',
       };
 
       setWatchlist((prev) => {
@@ -379,7 +161,6 @@ const DashboardScreen = () => {
       });
 
       setModalVisible(false);
-      setStockSearchQuery('');
       scrollViewRef.current?.scrollTo({ x: 0, y: 0, animated: true });
     },
     [watchlist, portfolioData, saveWatchlist]
@@ -462,74 +243,30 @@ const DashboardScreen = () => {
         logoColor: getRandomColor(),
       };
 
-      navigation.navigate('StockDetails', { stock: stockData });
+      // console.log('Available Stocks:', availableStocks);
+      navigation.navigate('StockDetails', { stock: stockData, liveData: availableStocks });
     },
     [portfolioData, navigation]
   );
 
-  const toggleSearch = useCallback(() => {
-    setShowSearch(!showSearch);
-    if (!showSearch && searchInputRef.current) {
-      setTimeout(() => searchInputRef.current?.focus(), 50);
-    }
-  }, [showSearch]);
-
-  const clearSearch = useCallback(() => {
-    setShowSearch(false);
-    setSearchQuery('');
-  }, []);
-
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
+    loadDefaultPortfolio();
     loadWatchlist().then(() => setRefreshing(false));
   }, [loadWatchlist]);
 
-  const filteredStocks = useMemo(() => {
-    if (!searchQuery) return portfolioData;
+  const loadDefaultPortfolio = async () => {
+    const savedPortfolios = await AsyncStorage.getItem('portfolios');
+    if (savedPortfolios) {
+      const portfolios = JSON.parse(savedPortfolios);
+      const defaultPortfolio = portfolios.find((p: Portfolio) => p.isDefault);
+      setDefaultPortfolio(defaultPortfolio || null);
+    }
+  };
 
-    return portfolioData.filter(
-      (stock: Stock) =>
-        (stock.symbol?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-        (stock.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-        (stock.companyName?.toLowerCase() || '').includes(searchQuery.toLowerCase())
-    );
-  }, [portfolioData, searchQuery]);
-
-  const filteredAvailableStocks = useMemo(() => {
-    if (!stockSearchQuery) return availableStocks;
-
-    return availableStocks.filter(
-      (stock: Stock) =>
-        (stock.symbol?.toLowerCase() || '').includes(stockSearchQuery.toLowerCase()) ||
-        (stock.name?.toLowerCase() || '').includes(stockSearchQuery.toLowerCase())
-    );
-  }, [availableStocks, stockSearchQuery]);
-
-  const sortedFilteredStocks = useMemo(() => {
-    return [...filteredStocks]
-      .filter((stock) => stock.lastTradedPrice !== null && stock.schange !== null)
-      .sort((a, b) => {
-        let comparison = 0;
-
-        if (sortOption === 'name') {
-          comparison = a.name.localeCompare(b.name);
-        } else if (sortOption === 'symbol') {
-          comparison = a.symbol.localeCompare(b.symbol);
-        } else {
-          const valA =
-            typeof a[sortOption] === 'string'
-              ? parseFloat(a[sortOption] as number)
-              : (a[sortOption] as number);
-          const valB =
-            typeof b[sortOption] === 'string'
-              ? parseFloat(b[sortOption] as number)
-              : (b[sortOption] as number);
-          comparison = valA - valB;
-        }
-
-        return sortDirection === 'asc' ? comparison : -comparison;
-      });
-  }, [filteredStocks, sortOption, sortDirection]);
+  useEffect(() => {
+    loadDefaultPortfolio();
+  }, []);
 
   useEffect(() => {
     loadWatchlist();
@@ -544,9 +281,114 @@ const DashboardScreen = () => {
   useEffect(() => {
     return () => {
       handleSearchDebounced.cancel();
-      handleStockSearchDebounced.cancel();
     };
-  }, [handleSearchDebounced, handleStockSearchDebounced]);
+  }, [handleSearchDebounced]);
+
+  // Portfolio calculations
+  const totalValue = useMemo(() => {
+    if (!defaultPortfolio) return 0;
+    return defaultPortfolio.stocks.reduce((total, stock) => {
+      const liveStock = marketData?.liveData?.find(
+        (s: { symbol: string }) => s.symbol === stock.symbol
+      );
+      return total + stock.quantity * (liveStock?.lastTradedPrice || 0);
+    }, 0);
+  }, [defaultPortfolio, marketData]);
+
+  const profitLoss = useMemo(() => {
+    if (!defaultPortfolio) return 0;
+    return defaultPortfolio.stocks.reduce((total, stock) => {
+      const liveStock = marketData?.liveData?.find(
+        (s: { symbol: string }) => s.symbol === stock.symbol
+      );
+      const currentValue = stock.quantity * (liveStock?.lastTradedPrice || 0);
+      const invested = stock.quantity * stock.avgPrice;
+      return total + (currentValue - invested);
+    }, 0);
+  }, [defaultPortfolio, marketData]);
+
+  // Market movers
+  const topGainers = useMemo(() => {
+    if (!marketData?.liveData) return [];
+    return [...marketData.liveData]
+      .filter((stock) => stock.symbol && stock.perChange !== undefined)
+      .sort((a, b) => (b.perChange || 0) - (a.perChange || 0))
+      .slice(0, 4)
+      .map((stock) => ({
+        ...stock,
+        isGainer: true,
+        chartData: chartDataCache[stock.symbol] || [],
+      }));
+  }, [marketData, chartDataCache]);
+
+  const topLosers = useMemo(() => {
+    if (!marketData?.liveData) return [];
+    return [...marketData.liveData]
+      .filter((stock) => stock.symbol && stock.perChange !== undefined)
+      .sort((a, b) => (a.perChange || 0) - (b.perChange || 0))
+      .slice(0, 4)
+      .map((stock) => ({
+        ...stock,
+        isGainer: false,
+        chartData: chartDataCache[stock.symbol] || [],
+      }));
+  }, [marketData, chartDataCache]);
+
+  const fetchStockChartData = async (symbol: string) => {
+    try {
+      if (chartDataCache[symbol]) return;
+
+      const currentTimestamp = Math.floor(Date.now() / 1000);
+      const oneYearAgoTimestamp = currentTimestamp - 365 * 24 * 60 * 60;
+
+      const response = await fetch(
+        `https://peridotnepal.xyz/api/company/chart_data/${symbol}/${oneYearAgoTimestamp}`,
+        { headers: { Permission: '2021D@T@f@RSt6&%2-D@T@' } }
+      );
+
+      const data = await response.json();
+
+      if (data.status === 200) {
+        const points = data.data || [];
+        const recentPoints = points.slice(-16);
+        const chartData = recentPoints.map((point: { c: any }) => ({
+          value: point.c,
+        }));
+
+        setChartDataCache((prev) => ({ ...prev, [symbol]: chartData }));
+      }
+    } catch (error) {
+      console.error(`Error fetching chart data for ${symbol}:`, error);
+    }
+  };
+
+  useEffect(() => {
+    if (!marketData?.liveData) return;
+
+    const loadChartData = async () => {
+      const allSymbols = [
+        ...topGainers.map((stock) => stock.symbol),
+        ...topLosers.map((stock) => stock.symbol),
+      ];
+
+      await Promise.all(allSymbols.map((symbol) => fetchStockChartData(symbol)));
+    };
+
+    loadChartData();
+  }, [marketData?.liveData]);
+
+  // Market data
+  const nepseIndex = marketData?.nepseIndex?.find((index: Stock) => index.sindex === 'NEPSE Index');
+  const sensitiveIndex = marketData?.nepseIndex?.find(
+    (index: Stock) => index.sindex === 'Sensitive Index'
+  );
+  const floatIndex = marketData?.nepseIndex?.find((index: Stock) => index.sindex === 'Float Index');
+  const totalTurnover = marketData?.marketSummary?.find(
+    (item: Stock) => item.ms_key === 'Total Turnover Rs:'
+  );
+  const totalTradedShares = marketData?.marketSummary?.find(
+    (item: Stock) => item.ms_key === 'Total Traded Shares'
+  );
 
   if (!marketData) {
     return (
@@ -556,51 +398,23 @@ const DashboardScreen = () => {
     );
   }
 
-  const nepseIndex = marketData.nepseIndex.find((index: Stock) => index.sindex === 'NEPSE Index');
-  const sensitiveIndex = marketData.nepseIndex.find(
-    (index: Stock) => index.sindex === 'Sensitive Index'
-  );
-  const floatIndex = marketData.nepseIndex.find((index: Stock) => index.sindex === 'Float Index');
-  const totalTurnover = marketData.marketSummary.find(
-    (item: Stock) => item.ms_key === 'Total Turnover Rs:'
-  );
-  const totalTradedShares = marketData.marketSummary.find(
-    (item: Stock) => item.ms_key === 'Total Traded Shares'
-  );
-
-  const renderModalItem = useCallback(
-    ({ item }: { item: Stock }) => (
-      <TouchableOpacity
-        onPress={() => addToWatchlist(item)}
-        className="flex-row items-center justify-between border-b border-gray-100 px-2 py-3">
-        <View className="flex-1">
-          <Text className="text-sm font-bold text-black">{item.symbol}</Text>
-          <Text className="text-xs text-gray-600">{item.name}</Text>
-        </View>
-        <Ionicons name="add-circle-outline" size={24} color="#15a37b" />
-      </TouchableOpacity>
-    ),
-    [addToWatchlist]
-  );
-
-  const keyExtractor = useCallback((item: Stock, index: number) => `${item.symbol}-${index}`, []);
-
-  const getItemLayout = useCallback(
-    (data: any, index: number) => ({ length: 80, offset: 80 * index, index }),
-    []
-  );
-
   return (
     <View className="flex flex-col bg-white" style={{ paddingTop: insets.top }}>
       <StatusBar style="auto" />
 
       {/* Header Section */}
-      <View className="mb-4 flex-row items-center justify-between px-6 pt-4">
+      <View className="mb-1 flex-row items-center justify-between px-6 pt-4">
         <View>
           <Text className="mx-1.5 text-lg font-bold text-gray-500">Hello, Kapalik</Text>
         </View>
         <View className="flex-1 flex-row items-center justify-end">
-          <TouchableOpacity className="relative m-1 mx-4">
+          <TouchableOpacity
+            className="relative p-2 px-3"
+            onPress={() => setSearchModalVisible(true)}>
+            <Ionicons name="search-outline" size={24} color="#6B7280" />
+          </TouchableOpacity>
+
+          <TouchableOpacity className="relative m-1 mx-3">
             <Ionicons name="notifications-outline" size={24} color="#6B7280" />
             <View className="absolute right-0 h-1.5 w-1.5 rounded-full bg-red-600" />
           </TouchableOpacity>
@@ -653,7 +467,7 @@ const DashboardScreen = () => {
                             ? sensitiveIndex?.perChange
                             : floatIndex?.perChange) >= 0
                           ? 'text-green-300'
-                          : 'text-red-300'
+                          : 'text-red-400'
                       }`}>
                       {(selectedIndexType === 'N'
                         ? nepseIndex.perChange
@@ -678,7 +492,7 @@ const DashboardScreen = () => {
                             ? sensitiveIndex?.schange
                             : floatIndex?.schange) >= 0
                           ? 'text-green-300'
-                          : 'text-red-300'
+                          : 'text-red-400'
                       }`}>
                       {(selectedIndexType === 'N'
                         ? nepseIndex.schange
@@ -769,10 +583,12 @@ const DashboardScreen = () => {
           </View>
         )}
 
+        <Popup />
+
         {/* WatchList Section */}
         <View className="">
           <View className="flex flex-row items-center justify-between">
-            <Text className="text-xl font-bold text-black">Watchlist</Text>
+            <Text className="pl-1 text-xl font-bold text-black">Watchlist</Text>
             <TouchableOpacity>
               <Text className="text-md font-normal text-[#15a37b]">View All</Text>
             </TouchableOpacity>
@@ -781,172 +597,173 @@ const DashboardScreen = () => {
 
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          className="flex-1"
+          className="flex"
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingTop: 12, marginBottom: 20 }}>
+            contentContainerStyle={{ paddingTop: 12 }}>
             {/* Watchlist Items */}
-            {watchlist.length > 0
-              ? watchlist.map((stock) => (
-                  <StockCard
-                    key={stock.id}
-                    stock={stock}
-                    onPress={() => navigateToStockDetails(stock)}
-                    onLongPress={() => removeFromWatchlist(stock.id!)}
-                    chartData={chartDataCache[stock.symbol]}
-                  />
-                ))
-              : (() => {
-                  const nabilStock = sortedFilteredStocks.find((stock) => stock.symbol === 'NABIL');
-                  // console.log(nabilStock)
+            {watchlist.length > 0 ? (
+              watchlist.map((stock) => (
+                <StockCard
+                  key={stock.id}
+                  stock={stock}
+                  onPress={() => navigateToStockDetails(stock)}
+                  onLongPress={() => removeFromWatchlist(stock.id!)}
+                  chartData={chartDataCache[stock.symbol]}
+                />
+              ))
+            ) : (
+              <View className="flex flex-row items-center justify-center">
+                {/* Left: Message and Add Button */}
+                <View className="mr-2 w-52 items-center justify-center rounded-xl border border-[#dce0e2] px-4 py-6">
+                  <AntDesign name="disconnect" size={40} color="#808080" />
+                  <Text className="mt-2 text-gray-500">Your watchlist is empty</Text>
+
+                  <TouchableOpacity
+                    onPress={() => setModalVisible(true)}
+                    className="mt-6 flex-row items-center rounded-lg bg-gray-100 px-4 py-2">
+                    <AntDesign name="plus" size={20} color="#808080" />
+                    <Text className="ml-2 text-sm font-semibold text-gray-700">Add Stocks</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Right: Suggested Stock Card */}
+                {(() => {
+                  const nabilStock = portfolioData.find(
+                    (stock: { symbol: string }) => stock.symbol === 'NABIL'
+                  );
                   return nabilStock ? (
-                    <EmptyWatchlist
+                    <StockCard
+                      stock={nabilStock}
                       onPress={() => navigateToStockDetails(nabilStock)}
                       onLongPress={() => removeFromWatchlist(nabilStock.id!)}
-                      stock={nabilStock}
                       chartData={chartDataCache[nabilStock.symbol]}
-                      onAdd={() => setModalVisible(true)}
+                      isSuggested={true}
                     />
-                  ) : (
-                    <Text>No suggested stock available</Text>
-                  );
+                  ) : null;
                 })()}
+              </View>
+            )}
 
             {/* Add Stock Card */}
             <TouchableOpacity
               onPress={() => setModalVisible(true)}
               className="mr-3 w-60 items-center justify-center rounded-xl border-2 border-dashed border-[#dce0e2] bg-gray-50 p-4"
               style={{ elevation: 2 }}>
-              <PlusIcon />
+              <AntDesign name="plus" size={28} color="#808080" />
               <Text className="mt-2 text-sm font-semibold text-gray-500">Add Stock</Text>
             </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
 
-        {/* Stocks Activity Header */}
-        <View className="mb-3 flex-row items-center justify-between">
-          <Text className="text-xl font-bold text-black">Stocks Activity</Text>
+        {/* Portfolio  */}
+        <View className="mt-4 flex flex-row items-center justify-between">
+          <Text className="pl-1 text-xl font-bold text-black">Portfolio</Text>
+          <TouchableOpacity
+            className="p-1"
+            onPress={() => navigation.navigate('PortfolioScreen', { liveData: portfolioData })}>
+            <Text className="text-md font-normal text-[#15a37b]">View All</Text>
+          </TouchableOpacity>
+        </View>
+        <View className="mb-4 mt-3">
+          <PortfolioSummary
+            portfolio={defaultPortfolio}
+            totalValue={totalValue}
+            profitLoss={profitLoss}
+            onPress={() => navigation.navigate('PortfolioScreen', { liveData: portfolioData })}
+          />
+        </View>
 
-          {showSearch ? (
-            <View className="ml-4 flex-1 flex-row items-center">
-              <TextInput
-                ref={searchInputRef}
-                className="flex-1 rounded-lg border border-[#dce0e2] px-4 py-2"
-                placeholder="Search Stocks"
-                placeholderTextColor="#9CA3AF"
-                defaultValue={searchQuery}
-                onChangeText={handleSearchDebounced}
-                autoFocus={true}
-              />
-              <TouchableOpacity className="ml-2 p-2" onPress={clearSearch}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
+        {/* Stocks Activity Header */}
+        <View className="flex-row items-center justify-between">
+          <Text className="pl-1 text-xl font-bold text-black">Market Movers</Text>
+        </View>
+
+        <View className="mb-2 py-4">
+          <View className="w-full flex-row flex-wrap justify-between">
+            <View className="mb-3 w-[49%]">
+              {topGainers.map((stock) => (
+                <View key={stock.symbol} className="mb-3">
+                  <MarketMoverCard stock={stock} onPress={() => navigateToStockDetails(stock)} />
+                </View>
+              ))}
             </View>
-          ) : (
-            <View className="flex flex-row items-center justify-center">
-              <TouchableOpacity
-                onPress={() => setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-                className="ml-2 p-1">
+            <View className="mb-3 w-[49%]">
+              {topLosers.map((stock) => (
+                <View key={stock.symbol} className="mb-3">
+                  <MarketMoverCard stock={stock} onPress={() => navigateToStockDetails(stock)} />
+                </View>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        {/* Join Us */}
+        <View className="mb-44 rounded-xl border border-[#e9ecef] bg-[#f8f9fa] p-5">
+          <View className="mb-2 flex-row items-center">
+            <View className="mr-2 rounded-full bg-[#15a37b] p-1">
+              <Ionicons name="trophy" size={16} color="white" />
+            </View>
+            <Text className="text-lg font-bold text-black">Join Arkfie Traders</Text>
+          </View>
+
+          <Text className="mb-3 text-sm text-gray-600">
+            Get <Text className="font-bold text-[#15a37b]">80% OFF</Text> today to unlock
+          </Text>
+
+          <View className="mb-4">
+            {[
+              'Exclusive Telegram group access',
+              'High-return trading strategies',
+              'Insider market tips & analysis',
+              'Winning stock picks from top traders',
+            ].map((item, index) => (
+              <View key={index} className="mb-1 flex-row items-start">
                 <Ionicons
-                  name={sortDirection === 'asc' ? 'arrow-up' : 'arrow-down'}
-                  size={24}
-                  color="#6B7280"
+                  name="checkmark-circle"
+                  size={14}
+                  color="#15a37b"
+                  className="mr-2 mt-0.5"
                 />
-              </TouchableOpacity>
-              <TouchableOpacity className="ml-4 px-4 py-2" onPress={toggleSearch}>
-                <Ionicons name="search-outline" size={24} color="#6B7280" />
-              </TouchableOpacity>
+                <Text className="flex-1 text-sm text-gray-800">{item}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center">
+              <MaterialIcons name="group" size={16} color="#6c757d" />
+              <Text className="ml-1 text-xs text-gray-500">Limited spots remaining</Text>
             </View>
-          )}
+
+            <TouchableOpacity
+              className="flex-row items-center rounded-full bg-[#15a37b] px-4 py-2"
+              activeOpacity={0.8}>
+              <Text className="mr-2 font-medium text-white">Join VIP Team</Text>
+              <MaterialIcons name="arrow-forward" size={16} color="white" />
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
 
-      {/* Stocks Activity List - Separate scrollable section */}
-      <View className="h-96 px-6">
-        <FlatList
-          data={sortedFilteredStocks}
-          keyExtractor={keyExtractor}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              onPress={() => navigateToStockDetails(item)}
-              className="mb-3 w-full flex-row items-center justify-between rounded-xl border border-[#dce0e2] bg-white p-3 py-4">
-              <View className="flex-1 flex-col items-start justify-center">
-                <Text className="mt-1 text-sm font-extrabold text-black">{item.symbol}</Text>
-                <Text className="text-xs font-light text-black">{item.companyName}</Text>
-              </View>
-
-              <View className="ml-2 w-20 items-start">
-                <Text className="text-base font-bold text-black">{item.schange}</Text>
-                <View className="mt-1 flex-row items-center">
-                  {item.isUp ? <UpArrowIcon /> : <DownArrowIcon />}
-                  <Text
-                    className={`${
-                      item.isUp ? 'text-green-600' : 'text-red-600'
-                    } ml-1 text-sm font-semibold`}>
-                    {item.percentageChange}
-                  </Text>
-                </View>
-              </View>
-
-              <View className="ml-4 w-32 items-end">
-                <Text className="text-base font-bold text-black">Rs. {item.lastTradedPrice}</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-          getItemLayout={getItemLayout}
-          initialNumToRender={15}
-          maxToRenderPerBatch={10}
-          windowSize={10}
-          removeClippedSubviews={false}
-          showsVerticalScrollIndicator={true}
-          contentContainerStyle={{ paddingBottom: 20 }}
-        />
-      </View>
-
-      {/* Add Stock Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
+      <AddStockModal
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}>
-        <View className="flex-1 justify-end bg-black/20">
-          <View className="h-[70%] rounded-t-3xl bg-white p-6">
-            <View className="mb-4 flex-row items-center justify-between">
-              <Text className="text-xl font-bold text-black">Add to Watchlist</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
+        onClose={() => setModalVisible(false)}
+        stocks={availableStocks}
+        onAddStock={addToWatchlist}
+      />
 
-            <TextInput
-              className="mb-4 w-full rounded-lg border border-[#dce0e2] px-4 py-3"
-              placeholder="Search stocks..."
-              placeholderTextColor="#9CA3AF"
-              defaultValue={stockSearchQuery}
-              onChangeText={handleStockSearchDebounced}
-              autoFocus={true}
-            />
-
-            <FlatList
-              data={filteredAvailableStocks}
-              keyExtractor={keyExtractor}
-              renderItem={renderModalItem}
-              initialNumToRender={15}
-              maxToRenderPerBatch={10}
-              windowSize={7}
-              removeClippedSubviews={true}
-            />
-
-            {filteredAvailableStocks.length === 0 && (
-              <View className="items-center justify-center py-10">
-                <Text className="text-gray-500">No stocks found</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
+      <SearchModal
+        visible={searchModalVisible}
+        onClose={() => setSearchModalVisible(false)}
+        stocks={portfolioData}
+        onSelectStock={(stock) => {
+          setSearchModalVisible(false);
+          navigateToStockDetails(stock);
+        }}
+      />
     </View>
   );
 };
